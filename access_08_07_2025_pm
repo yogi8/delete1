@@ -183,7 +183,7 @@ def fetch_and_clean(salesorderIds):
     # Run the function
 
 
-def create_json(salesorderid, format_type):
+def getbySalesOrderID(salesorderid, format_type):
     # Convert comma-separated string to list
     # salesorder_ids = [sid.strip() for sid in salesorderid.split(',') if sid.strip()]
 
@@ -249,4 +249,4 @@ if __name__ == "__main__":
     # cleaned = fetch_and_clean()
     # print(cleaned)
     format_type='export' #grid/export
-    create_json(salesorderid=salesorderIds,format_type=format_type)
+    getbySalesOrderID(salesorderid=salesorderIds,format_type=format_type)
