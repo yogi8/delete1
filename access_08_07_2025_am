@@ -1,0 +1,218 @@
+import httpx
+import json
+
+
+combined_data = {'data': {}}
+
+table_structure = {
+    "columns": [
+        {"value": "buid", "sortBy": "ascending"},
+        {"value": "ppDate", "sortBy": "ascending"},
+        {"value": "salesOrderId", "sortBy": "ascending"},
+        {"value": "fulfillmentId", "sortBy": "ascending"},
+        {"value": "Region", "sortBy": "ascending"},
+        {"value": "woId", "sortBy": "ascending"},
+        {"value": "foId", "sortBy": "ascending"},
+        {"value": "snNumber", "sortBy": "ascending"},
+        {"value": "systemQty", "sortBy": "ascending"},
+        {"value": "shipByDate", "sortBy": "ascending"},
+        {"value": "lob", "sortBy": "ascending"},
+        {"value": "shipFromFacility", "sortBy": "ascending"},
+        {"value": "shipToFacility", "sortBy": "ascending"}
+    ],
+    "data": []
+}
+
+
+FID ="https://keysphereservice-amer.usl-sit-r2-np.kob.dell.com/findby"
+FOID="https://fulfilmentorder-amer.usl-sit-r2-np.kob.dell.com/fulfillmentorderdata"
+# Replace with your actual API URL
+API_URL = "https://salesorderheaderfulfillment-amer.usl-sit-r2-np.kob.dell.com/soheader"
+
+salesorderIds="1004543337"
+
+salesorder_query = f"""
+query MyQuery {{
+  getBySalesorderids(salesorderIds: "{salesorderIds}") {{
+    result {{
+      fulfillment {{
+        fulfillmentId
+      }}
+      salesOrder {{
+        salesOrderId
+        buid
+        region
+      }}
+      workOrders {{
+        woId
+      }}
+      fulfillmentOrders {{
+        foId
+      }}
+      asnNumbers {{
+        snNumber
+      }}
+    }}
+  }}
+}}
+"""
+
+
+
+soaorder_query = """
+query MyQuery($salesorderIds: [String!]!) {
+  getSoheaderBySoids(salesOrderIds: $salesorderIds) {
+    buid
+    ppDate
+  }
+}
+"""
+
+fulfillment_query = """
+query MyQuery($fulfillment_id: String!) {
+getFulfillmentsById(fulfillmentId: $fulfillment_id) {
+    soHeaderRef
+    fulfillments {
+      systemQty
+      shipByDate
+      salesOrderLines {
+        lob
+      }
+    }
+  }
+}
+"""
+
+
+def post_api(URL, query, variables):
+    if variables:
+        response = httpx.post(API_URL, json={"query": query, "variables": variables}, verify=False)
+    else:
+        response = httpx.post(URL, json={"query": query}, verify=False)
+    print(response.json())
+    return response.json()
+
+ 
+def transform_keys(data):
+    def convert(key):
+        parts = key.split("_")
+        return ''.join(part.capitalize() for part in parts)
+    return {convert(k): v for k, v in data.items()}
+   
+def fetch_and_clean():
+    # response = httpx.get(API_URL, verify=False)
+    # response = httpx.post(API_URL, json={"query": query}, verify=False)
+    # print(response.json())
+    # exit()
+
+
+
+    # fullfillment=post_api(API_URL=FID, query=fullfilmentquery_query)
+    soi = {"salesorderIds": [salesorderIds]}
+    soaorder=post_api(URL=API_URL, query=soaorder_query, variables=soi)
+    if soaorder and soaorder.get('data'):
+        combined_data['data']['getSoheaderBySoids'] = soaorder['data']['getSoheaderBySoids']
+
+    salesorder=post_api(URL=FID, query=salesorder_query, variables=None)
+    if salesorder and salesorder.get('data'):
+        combined_data['data']['getBySalesorderids'] = salesorder['data']['getBySalesorderids']
+
+    result_list = salesorder.get("data", {}).get("getBySalesorderids", {}).get("result", [])
+
+    if result_list:
+        #fetch
+        fulfillment = result_list[0].get("fulfillment", {})
+        fulfillment_id = fulfillment.get("fulfillmentId")
+
+        if fulfillment_id:
+            print(f"Fulfillment ID found: {fulfillment_id}")
+            variables = {"fulfillment_id": fulfillment_id}
+            salesorder=post_api(URL=API_URL, query=fulfillment_query, variables=variables)
+            if salesorder and salesorder.get('data'):
+                combined_data['data']['getFulfillmentsById'] = salesorder['data']['getFulfillmentsById']            
+        else:
+            print("Fulfillment ID is missing or null.")
+        
+        #fetch
+        fulfillment_orders = result_list[0].get("fulfillmentOrders", [])
+        print(fulfillment_orders)
+        if fulfillment_orders and fulfillment_orders[0].get("foId"):
+            fo_id = fulfillment_orders[0]["foId"]
+            print("foId found:", fo_id)
+            foid_query = f"""
+            query MyQuery {{
+            getAllFulfillmentHeadersByFoId(foId: "{fo_id}") {{
+                foId
+                forderline {{
+                shipFromFacility
+                shipToFacility
+                }}
+            }}
+            }}
+            """
+            foid_output=post_api(URL=FOID, query=foid_query, variables=None)
+            if foid_output and foid_output.get('data'):
+                combined_data['data']['getAllFulfillmentHeadersByFoId'] = foid_output['data']['getAllFulfillmentHeadersByFoId']
+
+
+        else:
+            print("foId is missing or null.")
+
+    else:
+        print("No results found.")
+    print(json.dumps(combined_data, indent=2))
+
+    # raw_data = response.json()
+    # response.raise_for_status()
+    # print(raw_data)
+
+    # If response is a list of objects
+    # if isinstance(raw_data, list):
+    #     return [transform_keys(item) for item in raw_data]
+    # elif isinstance(raw_data, dict):
+    #     return transform_keys(raw_data)
+    # else: return raw_data
+    # unexpected
+    # Run the function
+
+def create_json():
+    # Extract base values
+    soheader = combined_data["data"]["getSoheaderBySoids"][0]
+    result = combined_data["data"]["getBySalesorderids"]["result"][0]
+    fulfillment = combined_data["data"]["getFulfillmentsById"][0]["fulfillments"][0]
+    forderline = combined_data["data"]["getAllFulfillmentHeadersByFoId"][0]["forderline"][0]
+
+    # Combine workOrders and snNumbers into comma-separated strings
+    # wo_ids = ", ".join(wo["woId"] for wo in result["workOrders"])
+    # sn_numbers = ", ".join(sn["snNumber"] for sn in result["asnNumbers"] if sn["snNumber"])
+
+    wo_ids = [wo["woId"] for wo in result["workOrders"]]
+    sn_numbers = [sn["snNumber"] for sn in result["asnNumbers"] if sn["snNumber"]]
+
+    row = {
+            "columns": [
+                {"value": soheader["buid"]},
+                {"value": soheader["ppDate"]},
+                {"value": result["salesOrder"]["salesOrderId"]},
+                {"value": result["fulfillment"]["fulfillmentId"]},
+                {"value": result["salesOrder"]["region"]},
+                {"value": wo_ids},
+                {"value": result["fulfillmentOrders"][0]["foId"]},
+                {"value": sn_numbers},
+                {"value": fulfillment["systemQty"]},
+                {"value": fulfillment["shipByDate"]},
+                {"value": fulfillment["salesOrderLines"][0]["lob"]},
+                {"value": forderline["shipFromFacility"]},
+                {"value": forderline["shipToFacility"]}
+                ]
+            }
+    table_structure["data"].append(row)
+
+
+    print(json.dumps(table_structure, indent=2))
+
+
+if __name__ == "__main__":
+    cleaned = fetch_and_clean()
+    print(cleaned)
+    create_json()
